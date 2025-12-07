@@ -69,4 +69,3 @@ logs/
 *.tmp
 test_model.pth
 
-*.md
