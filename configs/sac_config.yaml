@@ -1,0 +1,27 @@
+# SAC Configuration for Box2D Environments
+
+# LunarLander-v3 configuration
+LunarLander-v3:
+  episodes: 1000
+  learning_rate: 0.0003
+  discount_factor: 0.99
+  tau: 0.005
+  alpha: 0.2
+  automatic_entropy_tuning: true
+  batch_size: 256
+  replay_memory_size: 1000000
+  warmup_steps: 1000
+  max_episode_steps: 1000
+
+# CarRacing-v3 configuration
+CarRacing-v3:
+  episodes: 1500
+  learning_rate: 0.0003
+  discount_factor: 0.99
+  tau: 0.005
+  alpha: 0.2
+  automatic_entropy_tuning: true
+  batch_size: 256
+  replay_memory_size: 1000000
+  warmup_steps: 5000
+  max_episode_steps: 1000

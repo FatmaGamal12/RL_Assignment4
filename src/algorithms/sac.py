@@ -286,11 +286,14 @@ def select_action(self, state: np.ndarray, deterministic=False, env_name=None):
                 state = next_state
 
             results.append(ep_reward)
-            print(f"[TEST] Episode {ep} reward = {ep_reward}")
+            print(f"[TEST] Episode {ep+1}/{num_episodes} | Reward: {ep_reward:.2f}")
 
         return {
             "mean_reward": float(np.mean(results)),
             "std_reward": float(np.std(results)),
+            "min_reward": float(np.min(results)),
+            "max_reward": float(np.max(results)),
+            "episode_rewards": results,
         }
 
     # =====================================================

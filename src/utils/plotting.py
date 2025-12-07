@@ -124,6 +124,7 @@ def plot_rewards(
 def save_statistics_plot(
     values: List[float],
     title: str = "Statistics",
+    ylabel: str = "Value",
     save_path: Optional[str] = None,
     show: bool = False
 ) -> None:
@@ -133,6 +134,7 @@ def save_statistics_plot(
     Args:
         values: List of numerical values
         title: Plot title
+        ylabel: Y-axis label for the plots
         save_path: Path to save the plot (optional)
         show: Whether to display the plot
     """
@@ -140,7 +142,7 @@ def save_statistics_plot(
     
     # Box plot
     ax1.boxplot(values, vert=True)
-    ax1.set_ylabel('Value')
+    ax1.set_ylabel(ylabel)
     ax1.set_title(f'{title} - Box Plot')
     ax1.grid(True, alpha=0.3)
     
@@ -157,7 +159,7 @@ def save_statistics_plot(
     
     # Histogram
     ax2.hist(values, bins=20, edgecolor='black', alpha=0.7)
-    ax2.set_xlabel('Value')
+    ax2.set_xlabel(ylabel)
     ax2.set_ylabel('Frequency')
     ax2.set_title(f'{title} - Distribution')
     ax2.grid(True, alpha=0.3)
