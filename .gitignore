@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+rl_env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# Model files (except we want to keep the directory)
+# models/*.pth
+# models/*.pt
+# !models/.gitkeep
+
+# Video files
+# videos/*.mp4
+# videos/*.avi
+# !videos/.gitkeep
+
+# Results
+# results/*.png
+# results/*.txt
+# results/*.csv
+# !results/.gitkeep
+
+# Weights & Biases
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+test_model.pth
+
+*.md
