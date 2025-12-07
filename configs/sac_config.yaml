@@ -9,9 +9,14 @@ LunarLander-v3:
   alpha: 0.2
   automatic_entropy_tuning: true
   batch_size: 256
-  replay_memory_size: 1000000
+  replay_memory_size: 500000
   warmup_steps: 1000
   max_episode_steps: 1000
+  train_freq: 1 # Update every step instead of every episode
+  target_update_interval: 1
+  eval_interval: 50 # Test every 50 episodes
+  convergence_threshold: 250 # stop once stable >250
+  convergence_window: 50 # last 50 episodes averaged
 
 # CarRacing-v3 configuration
 CarRacing-v3:
@@ -22,6 +27,6 @@ CarRacing-v3:
   alpha: 0.2
   automatic_entropy_tuning: true
   batch_size: 256
-  replay_memory_size: 1000000
+  replay_memory_size: 500000
   warmup_steps: 5000
   max_episode_steps: 1000

@@ -85,6 +85,9 @@ class SAC:
         # copy weights
         self.target1.load_state_dict(self.critic1.state_dict())
         self.target2.load_state_dict(self.critic2.state_dict())
+        # ----------------- DEVICE -----------------
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.move_to_device()
 
         # Optimizers
         self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=lr)
@@ -109,9 +112,6 @@ class SAC:
         self.tau = config["tau"]
         self.batch_size = config["batch_size"]
 
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.move_to_device()
-
     def move_to_device(self):
         self.actor.to(self.device)
         self.critic1.to(self.device)
@@ -122,31 +122,31 @@ class SAC:
     # =====================================================
     #  Select action
     # =====================================================
-def select_action(self, state: np.ndarray, deterministic=False, env_name=None):
-    state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+    def select_action(self, state: np.ndarray, deterministic=False, env_name=None):
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
 
-    # ======================= Deterministic (for evaluation) =======================
-    if deterministic:
-        with torch.no_grad():
-            mean, _ = self.actor(state)
-            action = torch.tanh(mean).cpu().numpy()[0]
-    else:
-        # ======================= Stochastic sampling (training) =======================
-        with torch.no_grad():
-            action, _, _ = self.actor.sample(state)  
-            action = action.cpu().numpy()[0]
+        # ======================= Deterministic (for evaluation) =======================
+        if deterministic:
+            with torch.no_grad():
+                mean, _ = self.actor(state)
+                action = torch.tanh(mean).cpu().numpy()[0]
+        else:
+            # ======================= Stochastic sampling (training) =======================
+            with torch.no_grad():
+                action, _, _ = self.actor.sample(state)  
+                action = action.cpu().numpy()[0]
 
-    # ======================= Action Fix for CarRacing-v3 =======================
-    # Steering  ∈ [-1,1]
-    # Gas      ∈ [0,1]
-    # Brake    ∈ [0,1]
-    if env_name == "CarRacing-v3":  # Only apply when env is CarRacing
-        steering = action[0]                 # unchanged
-        gas      = (action[1] + 1) / 2        # scale from [-1,1] → [0,1]
-        brake    = (action[2] + 1) / 2        # scale from [-1,1] → [0,1]
-        action = np.array([steering, gas, brake], dtype=np.float32)
+        # ======================= Action Fix for CarRacing-v3 =======================
+        # Steering  ∈ [-1,1]
+        # Gas      ∈ [0,1]
+        # Brake    ∈ [0,1]
+        if env_name == "CarRacing-v3":  # Only apply when env is CarRacing
+            steering = action[0]                 # unchanged
+            gas      = (action[1] + 1) / 2        # scale from [-1,1] → [0,1]
+            brake    = (action[2] + 1) / 2        # scale from [-1,1] → [0,1]
+            action = np.array([steering, gas, brake], dtype=np.float32)
 
-    return action
+        return action
 
 
     # =====================================================
@@ -180,14 +180,22 @@ def select_action(self, state: np.ndarray, deterministic=False, env_name=None):
     def train(self, env, config=None, logger=None):
         episodes = self.cfg["episodes"]
         total_rewards = []
+         # convergence parameters
+        # Optional convergence parameters
+        convergence_threshold = self.cfg.get("convergence_threshold", None)
+        convergence_window = self.cfg.get("convergence_window", 50)
 
         for ep in range(episodes):
             state, _ = env.reset()
             ep_reward = 0
-
             done = False
+
             while not done:
-                action = self.select_action(state, deterministic=False)
+                action = self.select_action(
+                    state,
+                    deterministic=False,
+                    env_name=getattr(env, "env_name", None),
+                )
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
 
@@ -200,13 +208,31 @@ def select_action(self, state: np.ndarray, deterministic=False, env_name=None):
 
             total_rewards.append(ep_reward)
 
-            if logger:
-                logger.log({"episode_reward": ep_reward})
+            # Running average for convergence
+            window = min(len(total_rewards), convergence_window)
+            avg_reward = np.mean(total_rewards[-window:])
 
-            print(f"Episode {ep}/{episodes} | Reward: {ep_reward}")
+            print(f"Episode {ep+1}/{episodes} | Reward={ep_reward:.2f} | Avg({window})={avg_reward:.2f}")
+
+            if logger:
+                logger.log({"reward": ep_reward, "avg_reward": avg_reward})
+
+            # ====================== CHECK EARLY CONVERGENCE ======================
+            if convergence_threshold is not None and len(total_rewards) >= convergence_window:
+                if avg_reward >= convergence_threshold:
+                    print("\n================= SAC CONVERGED =================")
+                    print(f"Average reward {avg_reward:.2f} over last {convergence_window} eps")
+                    print(f"Training stopped early at episode {ep+1}")
+                    print("=================================================\n")
+                    break
+                
+        mean_reward = np.mean(total_rewards)
+        print("\n========= TRAINING COMPLETE =========")
+        print(f" Mean Reward = {mean_reward:.2f}")
+        print("=====================================\n")
 
         return {
-            "mean_reward": float(np.mean(total_rewards)),
+            "mean_reward": mean_reward,
             "max_reward": float(np.max(total_rewards)),
             "min_reward": float(np.min(total_rewards)),
         }
@@ -279,7 +305,7 @@ def select_action(self, state: np.ndarray, deterministic=False, env_name=None):
             ep_reward = 0
 
             while not done:
-                action = self.select_action(state, deterministic=True)
+                action = self.select_action(state,deterministic=True,env_name=getattr(env, "env_name", None),)
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
                 ep_reward += reward
