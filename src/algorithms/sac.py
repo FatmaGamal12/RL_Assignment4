@@ -163,11 +163,11 @@ class SAC:
         states, actions, rewards, next_states, dones = zip(*batch)
 
         return (
-            torch.FloatTensor(states).to(self.device),
-            torch.FloatTensor(actions).to(self.device),
-            torch.FloatTensor(rewards).unsqueeze(1).to(self.device),
-            torch.FloatTensor(next_states).to(self.device),
-            torch.FloatTensor(dones).unsqueeze(1).to(self.device),
+        torch.from_numpy(np.array(states, dtype=np.float32)).to(self.device),
+        torch.from_numpy(np.array(actions, dtype=np.float32)).to(self.device),
+        torch.from_numpy(np.array(rewards, dtype=np.float32)).unsqueeze(1).to(self.device),
+        torch.from_numpy(np.array(next_states, dtype=np.float32)).to(self.device),
+        torch.from_numpy(np.array(dones, dtype=np.float32)).unsqueeze(1).to(self.device),
         )
 
     # =====================================================
