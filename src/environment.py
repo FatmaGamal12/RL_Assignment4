@@ -92,7 +92,7 @@ class EnvironmentWrapper:
 
         # 2) Normalize observations and rewards for more stable learning
         self.env = NormalizeObservation(self.env)
-        self.env = NormalizeReward(self.env)
+        # self.env = NormalizeReward(self.env)
 
         # 3) Optional video recording
         if record_video:

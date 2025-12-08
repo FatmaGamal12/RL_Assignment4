@@ -69,7 +69,8 @@ class SAC:
         self.action_dim = action_dim
         self.cfg = config
 
-        lr = config["learning_rate"]
+        lr_actor  = config["learning_rate_actor"]
+        lr_critic = config["learning_rate_critic"]
 
         # Actor
         self.actor = Actor(state_dim, action_dim)
@@ -90,9 +91,10 @@ class SAC:
         self.move_to_device()
 
         # Optimizers
-        self.actor_opt = torch.optim.Adam(self.actor.parameters(), lr=lr)
-        self.critic1_opt = torch.optim.Adam(self.critic1.parameters(), lr=lr)
-        self.critic2_opt = torch.optim.Adam(self.critic2.parameters(), lr=lr)
+        self.actor_opt   = torch.optim.Adam(self.actor.parameters(), lr=lr_actor)
+        self.critic1_opt = torch.optim.Adam(self.critic1.parameters(), lr=lr_critic)
+        self.critic2_opt = torch.optim.Adam(self.critic2.parameters(), lr=lr_critic)
+
 
         # Entropy temperature α
         self.alpha = config["alpha"]
@@ -103,7 +105,8 @@ class SAC:
             self.log_alpha = torch.tensor(
                 np.log(self.alpha),device=self.device,requires_grad=True,
             )
-            self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=lr)
+            self.alpha_opt = torch.optim.Adam(
+                [self.log_alpha],lr=config.get("learning_rate_alpha", self.cfg["learning_rate_actor"]))
 
         # Replay buffer
         self.replay = deque(maxlen=config["replay_memory_size"])
@@ -217,14 +220,14 @@ class SAC:
             if logger:
                 logger.log({"reward": ep_reward, "avg_reward": avg_reward})
 
-            # ====================== CHECK EARLY CONVERGENCE ======================
-            if convergence_threshold is not None and len(total_rewards) >= convergence_window:
-                if avg_reward >= convergence_threshold:
-                    print("\n================= SAC CONVERGED =================")
-                    print(f"Average reward {avg_reward:.2f} over last {convergence_window} eps")
-                    print(f"Training stopped early at episode {ep+1}")
-                    print("=================================================\n")
-                    break
+            # # ====================== CHECK EARLY CONVERGENCE ======================
+            # if convergence_threshold is not None and len(total_rewards) >= convergence_window:
+            #     if avg_reward >= convergence_threshold:
+            #         print("\n================= SAC CONVERGED =================")
+            #         print(f"Average reward {avg_reward:.2f} over last {convergence_window} eps")
+            #         print(f"Training stopped early at episode {ep+1}")
+            #         print("=================================================\n")
+            #         break
                 
         mean_reward = np.mean(total_rewards)
         print("\n========= TRAINING COMPLETE =========")
@@ -293,6 +296,7 @@ class SAC:
         # soft update
         self.soft_update(self.target1, self.critic1)
         self.soft_update(self.target2, self.critic2)
+        
 
     # =====================================================
     #  Testing
