@@ -17,12 +17,19 @@ We use Gymnasium wrappers for:
 from typing import Tuple, Any, Dict, Optional
 
 import gymnasium as gym
+
 from gymnasium.wrappers import (
     RecordVideo,
     NormalizeObservation,
     NormalizeReward,
     TimeLimit,
 )
+
+# CNN feature wrapper for CarRacing (defined in CarRacingCNNWrapper.py in src/)
+try:
+    from CarRacingCNNWrapper import CarRacingCNNWrapper
+except ImportError:
+    CarRacingCNNWrapper = None   # CarRacing-v3 will error if this is missing
 
 
 class EnvironmentWrapper:
@@ -48,6 +55,7 @@ class EnvironmentWrapper:
         record_video: bool = False,
         max_steps: int = 1000,
         video_dir: str = "videos/",
+        
     ):
         """
         Initialize the Box2D environment.
@@ -85,15 +93,21 @@ class EnvironmentWrapper:
                 continuous=True,
                 render_mode=render_mode,
             )
-
         # --------- APPLY WRAPPERS --------- #
         # 1) Limit episode length
+        # --------- APPLY WRAPPERS --------- #
         self.env = TimeLimit(self.env, max_episode_steps=max_steps)
 
-        # 2) Normalize observations and rewards (CarRacing only)
+        # 2) If CarRacing — apply normalization + CNN
         if env_name == "CarRacing-v3":
             self.env = NormalizeObservation(self.env)
             self.env = NormalizeReward(self.env)
+
+            if CarRacingCNNWrapper is None:
+                raise ImportError("CarRacingCNNWrapper.py missing! You must include it for image features.")
+            
+            # Convert 96x96x3 image → feature vector (128-d default)
+            self.env = CarRacingCNNWrapper(self.env)
 
         # 3) Optional video recording
         if record_video:
@@ -106,6 +120,7 @@ class EnvironmentWrapper:
 
         # In this assignment, both envs are continuous (Box spaces)
         self.is_discrete_action = False
+
 
     # --------------- STANDARD ENV API --------------- #
 

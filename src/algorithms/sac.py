@@ -246,16 +246,21 @@ class SAC:
     def update_networks(self):
         states, actions, rewards, next_states, dones = self.sample_batch()
 
+        # ============================================================
+        # 1) Compute target Q using target networks (no grad)
+        # ============================================================
         with torch.no_grad():
             next_action, next_logprob, _ = self.actor.sample(next_states)
 
-            q1_next = self.target1(next_states, next_action)
-            q2_next = self.target2(next_states, next_action)
-            q_next = torch.min(q1_next, q2_next) - self.alpha * next_logprob
+            q1_target = self.target1(next_states, next_action)
+            q2_target = self.target2(next_states, next_action)
+            q_min_target = torch.min(q1_target, q2_target) - self.alpha * next_logprob
 
-            target_q = rewards + (1 - dones) * self.gamma * q_next
+            target_q = rewards + (1 - dones) * self.gamma * q_min_target
 
-        # Critic updates
+        # ============================================================
+        # 2) Critic update — *more frequent*
+        # ============================================================
         q1 = self.critic1(states, actions)
         q2 = self.critic2(states, actions)
 
@@ -270,33 +275,36 @@ class SAC:
         critic2_loss.backward()
         self.critic2_opt.step()
 
-        # Actor update
-        action_new, logprob_new, _ = self.actor.sample(states)
+        # ============================================================
+        # 3) Actor update — delayed (every 2 critic updates)
+        # ============================================================
+        self.update_step = getattr(self, "update_step", 0) + 1
+        if self.update_step % 2 == 0:
+            new_action, logprob, _ = self.actor.sample(states)
+            q1_new = self.critic1(states, new_action)
+            q2_new = self.critic2(states, new_action)
+            q_min_new = torch.min(q1_new, q2_new)
 
-        q1_new = self.critic1(states, action_new)
-        q2_new = self.critic2(states, action_new)
-        q_min = torch.min(q1_new, q2_new)
+            actor_loss = (self.alpha * logprob - q_min_new).mean()
 
-        actor_loss = (self.alpha * logprob_new - q_min).mean()
+            self.actor_opt.zero_grad()
+            actor_loss.backward()
+            self.actor_opt.step()
 
-        self.actor_opt.zero_grad()
-        actor_loss.backward()
-        self.actor_opt.step()
+            # ================= temperature auto-tuning =================
+            if self.automatic_entropy_tuning:
+                alpha_loss = -(self.log_alpha * (logprob + self.target_entropy).detach()).mean()
+                self.alpha_opt.zero_grad()
+                alpha_loss.backward()
+                self.alpha_opt.step()
+                self.alpha = self.log_alpha.exp()
 
-        # Entropy temperature tuning
-        if self.automatic_entropy_tuning:
-            alpha_loss = -(self.log_alpha * (logprob_new + self.target_entropy).detach()).mean()
-
-            self.alpha_opt.zero_grad()
-            alpha_loss.backward()
-            self.alpha_opt.step()
-
-            self.alpha = self.log_alpha.exp()
-
-        # soft update
-        self.soft_update(self.target1, self.critic1)
-        self.soft_update(self.target2, self.critic2)
-        
+        # ============================================================
+        # 4) Target soft update — increase tau for faster learning
+        # ============================================================
+        for target, src in [(self.target1, self.critic1), (self.target2, self.critic2)]:
+            for tp, sp in zip(target.parameters(), src.parameters()):
+                tp.data.copy_( 0.01 * sp.data + (1 - 0.01) * tp.data )
 
     # =====================================================
     #  Testing
