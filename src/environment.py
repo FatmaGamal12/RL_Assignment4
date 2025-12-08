@@ -46,7 +46,7 @@ class EnvironmentWrapper:
         env_name: str,
         render_mode: Optional[str] = None,
         record_video: bool = False,
-        max_steps: int = 2000,
+        max_steps: int = 1000,
         video_dir: str = "videos/",
     ):
         """
@@ -90,9 +90,10 @@ class EnvironmentWrapper:
         # 1) Limit episode length
         self.env = TimeLimit(self.env, max_episode_steps=max_steps)
 
-        # 2) Normalize observations and rewards for more stable learning
-        self.env = NormalizeObservation(self.env)
-        self.env = NormalizeReward(self.env)
+        # 2) Normalize observations and rewards (CarRacing only)
+        if env_name == "CarRacing-v3":
+            self.env = NormalizeObservation(self.env)
+            self.env = NormalizeReward(self.env)
 
         # 3) Optional video recording
         if record_video:
@@ -157,7 +158,7 @@ def make_env(
     env_name: str,
     render_mode: Optional[str] = None,
     record_video: bool = False,
-    max_steps: int = 2000,
+    max_steps: int = 1000,
     video_dir: str = "videos/",
 ) -> EnvironmentWrapper:
     """

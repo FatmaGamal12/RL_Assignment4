@@ -1,0 +1,10 @@
+Test Results for TD3 on LunarLander-v3
+Model: C:\Users\Aisha\Desktop\RL\RL_Assignment4\models\td3_LunarLander-v3_seed42.pth
+Number of episodes: 100
+Seed: 42
+============================================================
+
+mean_reward: 188.8316
+std_reward: 88.6585
+min_reward: -274.0675
+max_reward: 268.8533

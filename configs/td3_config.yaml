@@ -1,23 +1,32 @@
-# TD3 Configuration for Box2D Environments
-
-# LunarLander-v3 configuration
 LunarLander-v3:
-  episodes: 1000
-  learning_rate: 0.0003
-  discount_factor: 0.99
-  tau: 0.005
-  policy_noise: 0.2
-  noise_clip: 0.5
-  policy_delay: 2
-  exploration_noise: 0.1
-  batch_size: 256
-  replay_memory_size: 1000000
-  warmup_steps: 1000
+  # Training
+  episodes: 600
   max_episode_steps: 1000
+  eval_episodes: 10
+  eval_every: 25
 
-# CarRacing-v3 configuration
+  # TD3 core hyperparameters
+  learning_rate: 0.0001 # Adam LR for actor & critics
+  discount_factor: 0.99 # γ
+  tau: 0.005 # target soft update rate
+  policy_noise: 0.1
+  noise_clip: 0.2
+  policy_delay: 2 # delayed policy update (every 2 critic steps)
+  exploration_noise: 0.03 # σ for exploration noise added to actions
+
+  # Replay buffer
+  batch_size: 256
+  replay_memory_size: 1000000
+  warmup_steps: 5000 # collect random experience before learning
+
 CarRacing-v3:
-  episodes: 1500
+  # Training
+  episodes: 1200 # harder environment → more episodes
+  max_episode_steps: 1000
+  eval_episodes: 10
+  eval_every: 20
+
+  # TD3 core hyperparameters
   learning_rate: 0.0003
   discount_factor: 0.99
   tau: 0.005
@@ -25,7 +34,8 @@ CarRacing-v3:
   noise_clip: 0.5
   policy_delay: 2
   exploration_noise: 0.1
+
+  # Replay buffer
   batch_size: 256
   replay_memory_size: 1000000
-  warmup_steps: 5000
-  max_episode_steps: 1000
+  warmup_steps: 25000 # longer warmup for high-dimensional visual state
