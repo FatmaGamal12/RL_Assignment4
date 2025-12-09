@@ -1,0 +1,10 @@
+Test Results for SAC on LunarLander-v3
+Model: C:\Users\ASUS\Desktop\RL\Tutorials\Assignment4\models\sac_LunarLander-v3_seed42.pth
+Number of episodes: 100
+Seed: 42
+============================================================
+
+mean_reward: 269.3585
+std_reward: 48.3479
+min_reward: -26.1138
+max_reward: 317.7161
