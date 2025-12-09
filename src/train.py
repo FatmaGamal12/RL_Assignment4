@@ -174,6 +174,11 @@ def main():
     # Get state and action dimensions
     state_dim = env.get_state_dim()
     action_dim = env.get_action_dim()
+    # Tell ALGO how to interpret input shape
+    if args.environment == "CarRacing-v3":
+        input_type = "vector"   # CNN wrapper already reduced obs → 128 dims
+    else:
+        input_type = "state"
     
     print(f"State dimension: {state_dim}")
     print(f"Action dimension: {action_dim}")
