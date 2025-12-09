@@ -21,21 +21,22 @@ LunarLander-v3:
 
 CarRacing-v3:
   # Training
-  episodes: 1200 # harder environment → more episodes
+  episodes: 2000
   max_episode_steps: 1000
-  eval_episodes: 10
-  eval_every: 20
+  eval_every: 50
+  eval_episodes: 5
 
   # TD3 core hyperparameters
-  learning_rate: 0.0003
+  learning_rate: 0.0001 # smaller is more stable in image tasks
   discount_factor: 0.99
   tau: 0.005
   policy_noise: 0.2
-  noise_clip: 0.5
+  noise_clip: 0.3 # slightly lower → smoother actions
   policy_delay: 2
-  exploration_noise: 0.1
+  exploration_noise: 0.1 # keep but may reduce later to 0.05
 
   # Replay buffer
   batch_size: 256
   replay_memory_size: 1000000
-  warmup_steps: 25000 # longer warmup for high-dimensional visual state
+  warmup_steps: 30000 # must be large for CNN-based state
+
