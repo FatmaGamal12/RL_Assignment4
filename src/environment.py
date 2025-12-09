@@ -17,20 +17,101 @@ We use Gymnasium wrappers for:
 from typing import Tuple, Any, Dict, Optional
 
 import gymnasium as gym
+import numpy as np
+import torch
+import torch.nn as nn
 
 from gymnasium.wrappers import (
     RecordVideo,
-    NormalizeObservation,
-    NormalizeReward,
     TimeLimit,
 )
 
-# CNN feature wrapper for CarRacing (defined in CarRacingCNNWrapper.py in src/)
-try:
-    from CarRacingCNNWrapper import CarRacingCNNWrapper
-except ImportError:
-    CarRacingCNNWrapper = None   # CarRacing-v3 will error if this is missing
+# ---------------------------------------------------------
+#  CNN Encoder for CarRacing (image → 128-dim feature)
+# ---------------------------------------------------------
+class CarRacingCNN(nn.Module):
+    def __init__(self, feature_dim=128):
+        super().__init__()
 
+        # CNN that processes 96x96x3 images
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=8, stride=4),  # → (32, 23, 23)
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),  # → (64, 10, 10)
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),  # → (64, 8, 8)
+            nn.ReLU(),
+        )
+
+        # Compute flatten size automatically
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, 96, 96)
+            conv_out = self.conv_layers(dummy)
+            self.flatten_size = conv_out.view(1, -1).shape[1]
+            print("CNN conv output size:", self.flatten_size)
+
+        # Fully connected layer: flatten → feature_dim
+        self.fc = nn.Sequential(
+            nn.Linear(self.flatten_size, feature_dim),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float32)
+
+        # Input could already be (1,3,96,96) from wrapper
+        if x.ndim == 3:        # HWC
+            x = x.permute(2, 0, 1).unsqueeze(0)
+        elif x.ndim == 4:      # Already BCHW
+            pass
+        else:
+            raise ValueError(f"Unexpected obs shape {x.shape}")
+
+        x = x / 255.0
+
+        h = self.conv_layers(x)
+
+        h = h.flatten(start_dim=1)  # keep batch dim
+        return self.fc(h)
+
+
+
+
+# ---------------------------------------------------------
+#       CarRacing Wrapper (applied inside Environment)
+# ---------------------------------------------------------
+class CarRacingCNNWrapper(gym.Wrapper):
+    """
+    Wraps CarRacing so that:
+       96x96x3 image  → CNN → 128-d vector
+    """
+
+    def __init__(self, env, feature_dim=128):
+        super().__init__(env)
+        self.feature_dim = feature_dim
+        self.cnn = CarRacingCNN(feature_dim).eval()  # no training here
+
+        # Override observation space
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(feature_dim,), dtype=np.float32
+        )
+
+    def encode(self, obs):
+        """Convert HWC image → CHW tensor → CNN → 128-dim vector"""
+        obs = torch.tensor(obs, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0)
+        with torch.no_grad():
+            features = self.cnn(obs).squeeze(0).cpu().numpy()
+        return features.astype(np.float32)
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        return self.encode(obs), info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        return self.encode(obs), reward, terminated, truncated, info
 
 class EnvironmentWrapper:
     """
@@ -45,7 +126,7 @@ class EnvironmentWrapper:
 
     SUPPORTED_ENVIRONMENTS = [
         "LunarLander-v3",
-        "CarRacing-v3",   # we will use this later
+        "CarRacing-v3",   
     ]
 
     def __init__(
@@ -80,7 +161,6 @@ class EnvironmentWrapper:
             render_mode = "rgb_array"
 
         # --------- CREATE BASE GYM ENVIRONMENT --------- #
-# --------- CREATE BASE GYM ENVIRONMENT --------- #
         if env_name == "LunarLander-v3":
             self.env = gym.make("LunarLander-v3", continuous=True, render_mode=render_mode)
         elif env_name == "CarRacing-v3":
@@ -88,18 +168,9 @@ class EnvironmentWrapper:
         # 1) Limit episode length
         self.env = TimeLimit(self.env, max_episode_steps=max_steps)
         
-        # 2) If CarRacing — apply normalization + CNN
+        # 2) If CarRacing — apply CNN
         if env_name == "CarRacing-v3":
-            self.env = NormalizeObservation(self.env)
-            self.env = NormalizeReward(self.env)
-            # CNN feature extractor: image → 128-dim vector
-            if CarRacingCNNWrapper is None:
-                raise ImportError(
-                    "\n❌ CarRacingCNNWrapper.py is missing in src/.\n"
-                    "Please make sure it is there and importable.\n"
-                )
-            # Convert 96x96x3 image → feature vector (128-d default)
-            self.env = CarRacingCNNWrapper(self.env)
+            self.env =CarRacingCNNWrapper(self.env)
 
 
         # 3) Optional video recording
