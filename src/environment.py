@@ -83,27 +83,26 @@ class EnvironmentWrapper:
 # --------- CREATE BASE GYM ENVIRONMENT --------- #
         if env_name == "LunarLander-v3":
             self.env = gym.make("LunarLander-v3", continuous=True, render_mode=render_mode)
-
-            # Add time limit immediately after creation
-            self.env = TimeLimit(self.env, max_episode_steps=max_steps)
-
         elif env_name == "CarRacing-v3":
-            # 1) Create raw env
-            self.env = gym.make("CarRacing-v3", continuous=True, render_mode=render_mode)
-
-            # 2) Apply episode limit BEFORE CNN
-            self.env = TimeLimit(self.env, max_episode_steps=max_steps)
-            
+            self.env = gym.make("CarRacing-v3",continuous=True,render_mode=render_mode,)
+        # 1) Limit episode length
+        self.env = TimeLimit(self.env, max_episode_steps=max_steps)
+        
+        # 2) If CarRacing — apply normalization + CNN
+        if env_name == "CarRacing-v3":
+            self.env = NormalizeObservation(self.env)
+            self.env = NormalizeReward(self.env)
             # CNN feature extractor: image → 128-dim vector
             if CarRacingCNNWrapper is None:
                 raise ImportError(
                     "\n❌ CarRacingCNNWrapper.py is missing in src/.\n"
                     "Please make sure it is there and importable.\n"
                 )
-            self.env = CarRacingCNNWrapper(self.env, device="cuda", feature_dim=128)
+            # Convert 96x96x3 image → feature vector (128-d default)
+            self.env = CarRacingCNNWrapper(self.env)
 
 
-            # 3) Optional video recording
+        # 3) Optional video recording
         if record_video:
             # record every episode (episode_trigger=lambda ep: True)
             self.env = RecordVideo(self.env, video_dir, episode_trigger=lambda ep: True)
@@ -143,12 +142,12 @@ class EnvironmentWrapper:
 
     def get_state_dim(self) -> int:
         # LunarLander state is already 8-dimensional → keep it exactly the same
-        if self.env_name == "LunarLander-v3":
-            return int(self.observation_space.shape[0])
+        # if self.env_name == "LunarLander-v3":
+        return int(self.observation_space.shape[0])
 
-        # CarRacing CNN output → ALWAYS 128 features
-        if self.env_name == "CarRacing-v3":
-            return 128
+        # # CarRacing CNN output → ALWAYS 128 features
+        # if self.env_name == "CarRacing-v3":
+        #     return 128
 
     def get_action_dim(self) -> int:
         """Return action dimension (continuous)."""

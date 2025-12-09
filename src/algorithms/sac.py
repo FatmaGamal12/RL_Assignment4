@@ -101,13 +101,12 @@ class SAC:
         self.automatic_entropy_tuning = config["automatic_entropy_tuning"]
 
         if self.automatic_entropy_tuning:
-            # If user defined a target entropy → use it (CarRacing needs lower entropy)
-            self.target_entropy = config.get("target_entropy", -action_dim)
-
+            self.target_entropy = -action_dim
             self.log_alpha = torch.tensor(
-                np.log(self.alpha), device=self.device, requires_grad=True
+                np.log(self.alpha),device=self.device,requires_grad=True,
             )
-            self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=lr_actor)
+            self.alpha_opt = torch.optim.Adam(
+                [self.log_alpha],lr=config.get("learning_rate_alpha", self.cfg["learning_rate_actor"]))
 
         # Replay buffer
         self.replay = deque(maxlen=config["replay_memory_size"])
@@ -195,24 +194,11 @@ class SAC:
             done = False
 
             while not done:
-                # ====================================================== #
-                #  RANDOM WARMUP → required for CarRacing, harmless for Lunar
-                # ====================================================== #
-                STEP_COUNT = getattr(self, "STEP_COUNT", 0)
-                start_steps = self.cfg.get("start_steps", 0)
-
-                if STEP_COUNT < start_steps:
-                    action = env.sample_action()                     # random exploration
-                else:
-                    action = self.select_action(
-                        state,
-                        deterministic=False,
-                        env_name=getattr(env, "env_name", None),
-                    )
-
-                self.STEP_COUNT = STEP_COUNT + 1
-                # ====================================================== #
-
+                action = self.select_action(
+                    state,
+                    deterministic=False,
+                    env_name=getattr(env, "env_name", None),
+                )
                 next_state, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
 
@@ -220,17 +206,8 @@ class SAC:
                 state = next_state
                 ep_reward += reward
 
-            # ============================================================
-            # Start training only after "update_after" transitions stored
-            # Then update multiple times per step if configured
-            # ============================================================
-            update_after = self.cfg.get("update_after", self.batch_size)
-            updates_per_step = self.cfg.get("updates_per_step", 1)
-
-            if len(self.replay) > update_after:
-                for _ in range(updates_per_step):
+                if len(self.replay) > self.batch_size:
                     self.update_networks()
-
 
             total_rewards.append(ep_reward)
 
@@ -325,11 +302,11 @@ class SAC:
         # ============================================================
         # 4) Target soft update — increase tau for faster learning
         # ============================================================
-        # ============================================================
-        # 4) Target soft update — use configured tau
-        # ============================================================
+        tau = self.tau  # use config value
+
         for target, src in [(self.target1, self.critic1), (self.target2, self.critic2)]:
-            self.soft_update(target, src)
+            for tp, sp in zip(target.parameters(), src.parameters()):
+                tp.data.copy_( tau * sp.data + (1 - tau) * tp.data )
 
     # =====================================================
     #  Testing
