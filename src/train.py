@@ -190,8 +190,13 @@ def main():
     if args.algorithm == "ppo" and args.environment == "CarRacing-v3":
         ckpt = config.get("checkpoint_path", "models/ppo_CarRacing-v3_best.pth")
         if os.path.exists(ckpt):
-            print(f"Loading checkpoint: {ckpt}")
-            agent.load(ckpt)
+            print(f"Found existing checkpoint: {ckpt}")
+            try:
+                agent.load(ckpt)
+                print("✓ Checkpoint loaded successfully")
+            except Exception as e:
+                print(f"✗ Could not load checkpoint: {e}")
+                print("Starting training from scratch...")
         else:
             print("No checkpoint found, training from scratch.")
 

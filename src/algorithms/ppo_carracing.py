@@ -398,11 +398,22 @@ class PPO_CarRacing:
                 param_group['lr'] = new_lr
 
     def _preprocess_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Convert RGB to grayscale and resize to 64x64."""
+        """
+        Convert RGB to grayscale, crop GUI, and resize to 64x64.
+        
+        CarRacing-v3 frame: (96, 96, 3)
+        - Bottom 12 pixels: GUI dashboard (useless for learning)
+        - Side 6 pixels each: borders
+        - Crop to (84, 84) -> resize to (64, 64)
+        """
         from PIL import Image
         
+        # CRITICAL: Remove bottom 12px GUI and 6px side borders
+        # Standard preprocessing from RL papers
+        cropped = frame[:84, 6:90, :]
+        
         # Convert to grayscale
-        gray = 0.299 * frame[:, :, 0] + 0.587 * frame[:, :, 1] + 0.114 * frame[:, :, 2]
+        gray = 0.299 * cropped[:, :, 0] + 0.587 * cropped[:, :, 1] + 0.114 * cropped[:, :, 2]
         
         # Resize to 64x64
         img = Image.fromarray(gray.astype(np.uint8))
@@ -691,11 +702,23 @@ class PPO_CarRacing:
 
     def load(self, path: str):
         state = torch.load(path, map_location=self.device)
-        self.policy.load_state_dict(state['policy'])
-        if 'optimizer' in state:
-            self.optimizer.load_state_dict(state['optimizer'])
-        if self.normalize_reward and 'reward_rms' in state:
-            rms = state['reward_rms']
-            self.reward_rms.mean = rms['mean']
-            self.reward_rms.var = rms['var']
-            self.reward_rms.count = rms['count']
+        
+        # Handle both old and new checkpoint formats
+        if 'policy' in state:
+            # New format (with optimizer, reward_rms, etc.)
+            self.policy.load_state_dict(state['policy'])
+            if 'optimizer' in state:
+                self.optimizer.load_state_dict(state['optimizer'])
+            if self.normalize_reward and 'reward_rms' in state:
+                rms = state['reward_rms']
+                self.reward_rms.mean = rms['mean']
+                self.reward_rms.var = rms['var']
+                self.reward_rms.count = rms['count']
+        else:
+            # Old format (just state_dict directly)
+            try:
+                self.policy.load_state_dict(state)
+                print("Loaded old checkpoint format (policy weights only)")
+            except Exception as e:
+                print(f"Warning: Could not load checkpoint: {e}")
+                print("Starting training from scratch...")
