@@ -16,25 +16,45 @@ LunarLander-v3:
   save_path: models/ppo_LunarLander-v3_seed42.pth
 
 CarRacing-v3:
-  episodes: 3000
-  learning_rate: 0.0001
-  discount_factor: 0.99
+  # ============================================================
+  # CRITICAL FIXES based on RL-Baselines3-Zoo tuned params
+  # ============================================================
+
+  # Learning rate with LINEAR DECAY (not constant)
+  learning_rate: 0.0001 # Initial LR
+  use_linear_lr_decay: true # Decay to 0 over training
+
+  # Standard PPO hyperparameters
+  gamma: 0.99
   gae_lambda: 0.95
-  clip_epsilon: 0.2
-  entropy_coef: 0.005
-  value_coef: 0.5
+  clip_range: 0.2
+  ent_coef: 0.0 # CRITICAL: 0.0 not 0.005
+  vf_coef: 0.5
   max_grad_norm: 0.5
-  batch_size: 64
-  n_steps: 2048
+
+  # Batch configuration (FIXED from RL Zoo)
+  n_envs: 8 # CRITICAL: Use 8 parallel environments
+  n_steps: 512 # CRITICAL: 512 not 2048
+  batch_size: 128 # CRITICAL: 128 not 64
   n_epochs: 10
+
+  # Training configuration
+  episodes: 2000
   max_episode_steps: 1000
 
-  # Image-specific
-  frame_stack: 4
-  frame_skip: 2
+  image_size: 64 # CRITICAL: 64x64 not 96x96
+  frame_stack: 2 # CRITICAL: 2 stacked frames (not 4)
+  frame_skip: 2 # Action repeat
 
-  # Early stopping + checkpoint
-  reward_window: 50 # mean over last 50 episodes
-  early_stop_patience: 200 # updates with no improvement before stopping
-  early_stop_min_episodes: 400
+  use_sde: true # CRITICAL: Enable SDE
+  sde_sample_freq: 4
+  log_std_init: -2.0 # Initial log std for action distribution
+
+  normalize_reward: true # CRITICAL: Normalize rewards
+  reward_scale: 1.0
+  clip_reward: 10.0
+
+  reward_window: 100 # Track mean over last 100 episodes
+  early_stop_patience: 200 # Stop if no improvement for 200 updates
+  early_stop_min_episodes: 400 # Minimum episodes before early stop
   checkpoint_path: models/ppo_CarRacing-v3_best.pth
