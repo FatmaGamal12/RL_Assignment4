@@ -4,7 +4,7 @@ Number of episodes: 100
 Seed: 42
 ============================================================
 
-mean_reward: 269.3585
-std_reward: 48.3479
-min_reward: -26.1138
-max_reward: 317.7161
+mean_reward: 282.4204
+std_reward: 19.0075
+min_reward: 216.8229
+max_reward: 320.8348
