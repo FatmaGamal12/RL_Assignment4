@@ -465,7 +465,7 @@ class PPO_CarRacing:
         episode_counts = np.zeros(self.n_envs)
         episode_returns = np.zeros(self.n_envs)
 
-        # Reset all envs and init stacks
+        # Reset all envs and init stacks (only print once per rollout)
         obs_list = []
         for i in range(self.n_envs):
             obs, _ = envs[i].reset()
@@ -527,10 +527,11 @@ class PPO_CarRacing:
             obs_tensor = to_tensor(state_stacks, self.device)
             _, _, last_values = self.policy.forward(obs_tensor)
         last_values = last_values.cpu().numpy()
+        last_dones = np.array(dones, dtype=np.float32)
 
         self.buffer.compute_returns_and_advantages(
             last_values=last_values,
-            last_dones=dones,
+            last_dones=last_dones,
         )
 
         return episode_rewards
@@ -582,9 +583,13 @@ class PPO_CarRacing:
         print(f"  n_envs: {self.n_envs}, n_steps: {self.n_steps}")
         print(f"  Reward normalization: {self.normalize_reward}")
         print(f"  SDE: {self.use_sde}")
+        print()
 
         best_mean_reward = -np.inf
         no_improve_updates = 0
+        
+        import time
+        start_time = time.time()
 
         for update in range(1, num_updates + 1):
             self.num_updates = update
@@ -594,18 +599,25 @@ class PPO_CarRacing:
             self._update_learning_rate(progress_remaining)
 
             # Collect rollout
+            update_start = time.time()
             ep_rewards = self._collect_rollout(envs)
             all_episode_rewards.extend(ep_rewards)
+            rollout_time = time.time() - update_start
 
             # Update policy
+            train_start = time.time()
             self._update()
+            train_time = time.time() - train_start
 
             # Stats
             if len(all_episode_rewards) > 0:
                 window_size = min(self.reward_window, len(all_episode_rewards))
                 mean_reward = float(np.mean(all_episode_rewards[-window_size:]))
+                recent_10 = all_episode_rewards[-10:] if len(all_episode_rewards) >= 10 else all_episode_rewards
+                mean_10 = float(np.mean(recent_10))
             else:
                 mean_reward = 0.0
+                mean_10 = 0.0
 
             improved = False
             if mean_reward > best_mean_reward:
@@ -616,24 +628,42 @@ class PPO_CarRacing:
             else:
                 no_improve_updates += 1
 
-            if update % 10 == 0:
-                current_lr = self.optimizer.param_groups[0]['lr']
-                print(f"[Update {update}/{num_updates}] "
-                      f"Episodes: {self.total_episodes}, "
-                      f"Mean reward (last {window_size}): {mean_reward:.2f}, "
-                      f"Best: {best_mean_reward:.2f}, "
-                      f"LR: {current_lr:.2e}")
+            # Print every update (not just every 10)
+            current_lr = self.optimizer.param_groups[0]['lr']
+            elapsed = time.time() - start_time
+            fps = (self.n_steps * self.n_envs) / rollout_time
+            
+            print(
+                    f"[Update {update}/{num_updates}] "
+                    f"Global steps: {self.global_step:,} | "
+                    f"Episodes: {self.total_episodes:,} | "
+                    f"Mean reward (last 10): {mean_10:.2f} | "
+                    f"Mean reward (last {window_size}): {mean_reward:.2f} | "
+                    f"Best mean: {best_mean_reward:.2f} | "
+                    f"LR: {current_lr:.2e} | "
+                    f"FPS: {fps:.0f} | "
+                    f"Rollout: {rollout_time:.2f}s | "
+                    f"Update: {train_time:.2f}s"
+                    + ("  ⭐ NEW BEST" if improved else "")
+                )
+
 
             if logger:
                 logger.log({
-                    "train/update": update,
-                    "train/episodes": self.total_episodes,
-                    "train/mean_reward": mean_reward,
-                    "train/best_mean_reward": best_mean_reward,
-                    "train/learning_rate": self.optimizer.param_groups[0]['lr'],
+                    "update": update,
+                    "global_steps": self.global_step,
+                    "episodes": self.total_episodes,
+                    "mean_reward_last10": mean_10,
+                    "mean_reward_window": mean_reward,
+                    "best_mean_reward": best_mean_reward,
+                    "learning_rate": current_lr,
+                    "fps": fps,
+                    "rollout_time_sec": rollout_time,
+                    "update_time_sec": train_time,
                 })
-
-            # Early stopping
+            
+            
+                        # Early stopping
             if (self.total_episodes >= self.early_stop_min_episodes and
                 no_improve_updates >= self.early_stop_patience):
                 print(f"\nEarly stopping at update {update}")
@@ -647,6 +677,7 @@ class PPO_CarRacing:
                 "mean_reward": float(rewards_array.mean()),
                 "std_reward": float(rewards_array.std()),
                 "best_mean_reward": float(best_mean_reward),
+                "total_time_minutes": (time.time() - start_time) / 60,
             }
         else:
             stats = {"total_episodes": self.total_episodes}
