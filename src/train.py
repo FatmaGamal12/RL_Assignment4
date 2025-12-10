@@ -173,7 +173,17 @@ def main():
     print(f"Initializing {algo_variant.upper()} agent...")
     agent = AlgoClass(state_dim, action_dim, config)
     print("Agent initialized successfully.\n")
-
+    # ------------------------------------------------------------
+    # Load checkpoint if continuing CarRacing PPO training
+    # ------------------------------------------------------------
+    if args.algorithm == "ppo" and args.environment == "CarRacing-v3":
+        ckpt = config.get("checkpoint_path", "models/ppo_CarRacing-v3_best.pth")
+        if os.path.exists(ckpt):
+            print(f"Loading existing PPO CarRacing checkpoint: {ckpt}")
+            agent.load(ckpt)
+        else:
+            print("No checkpoint found, training from scratch.")
+    
     # ------------------------------------------------------------------
     # Initialize W&B logger
     # ------------------------------------------------------------------
