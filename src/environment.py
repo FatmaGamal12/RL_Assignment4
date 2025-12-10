@@ -257,7 +257,7 @@ class EnvironmentWrapper:
             f"EnvironmentWrapper({self.env_name})\n"
             f"  Observation space: {self.observation_space}\n"
             f"  Action space: {self.action_space}\n"
-            f"  Using CarRacing CNN: {self.using_carracing_cnn}\n"
+            f"  Using CarRacing CNN: {self.use_carracing_cnn}\n"
             f"  Discrete actions: {self.is_discrete_action}"
         )
 
