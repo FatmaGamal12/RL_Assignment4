@@ -9,6 +9,7 @@ Proximal Policy Optimization (PPO) implementation for Assignment 4.
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
+import os  # >>> NEW
 
 import numpy as np
 import torch
@@ -251,6 +252,18 @@ class PPO:
         self.episodes = config.get("episodes", 1000)
         self.max_episode_steps = config.get("max_episode_steps", 1000)
 
+        # >>> NEW: early stopping + best-model settings
+        self.best_mean_window = config.get("best_mean_window", 50)
+        self.early_stop_patience = config.get("early_stop_patience", 80)
+        # if best_model_path not provided, derive from save_path or use default
+        default_best_path = "models/ppo_best_model.pth"
+        self.best_model_path = config.get(
+            "best_model_path",
+            config.get("save_path", default_best_path).replace(".pth", "_best.pth")
+            if config.get("save_path")
+            else default_best_path,
+        )
+
         # Actor–critic network
         self.policy = ActorCritic(state_dim, action_dim).to(self.device)
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.learning_rate)
@@ -409,6 +422,18 @@ class PPO:
                 self.optimizer.step()
 
     # --------------------------------------------------------
+    #  Helper: save best model
+    # --------------------------------------------------------  # >>> NEW
+
+    def _save_best_model(self):
+        if not self.best_model_path:
+            return
+        directory = os.path.dirname(self.best_model_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        torch.save(self.policy.state_dict(), self.best_model_path)
+
+    # --------------------------------------------------------
     #  Public API: train / evaluate / save / load
     # --------------------------------------------------------
 
@@ -432,7 +457,10 @@ class PPO:
             f"({num_updates} updates × {self.n_steps} steps)"
         )
 
-        best_mean_reward = -np.inf
+        best_mean_reward_10 = -np.inf
+        best_mean_reward_window = -np.inf  # >>> NEW
+        updates_without_improvement = 0    # >>> NEW
+        window = self.best_mean_window     # >>> NEW
 
         for update in range(1, num_updates + 1):
             ep_rewards = self._collect_rollout(env)
@@ -444,30 +472,60 @@ class PPO:
             if len(all_episode_rewards) > 0:
                 last_10 = all_episode_rewards[-10:]
                 mean_10 = float(np.mean(last_10))
+
+                # >>> NEW: mean over window (default 50)
+                if len(all_episode_rewards) >= window:
+                    last_w = all_episode_rewards[-window:]
+                    mean_w = float(np.mean(last_w))
+                else:
+                    mean_w = float(np.mean(all_episode_rewards))
             else:
                 mean_10 = 0.0
+                mean_w = 0.0
 
-            if mean_10 > best_mean_reward:
-                best_mean_reward = mean_10
+            # Track best mean over 10 (for backwards compatibility)
+            if mean_10 > best_mean_reward_10:
+                best_mean_reward_10 = mean_10
+
+            # >>> NEW: best mean over window (50)
+            if mean_w > best_mean_reward_window:
+                best_mean_reward_window = mean_w
+                updates_without_improvement = 0
+                self._save_best_model()
+            else:
+                updates_without_improvement += 1
 
             print(
                 f"[Update {update}/{num_updates}] "
                 f"Global steps: {self.global_step}, "
                 f"Episodes: {self.total_episodes}, "
                 f"Mean reward (last 10): {mean_10:.2f}, "
-                f"Best mean (last 10): {best_mean_reward:.2f}"
+                f"Mean reward (last {window}): {mean_w:.2f}, "
+                f"Best mean (last {window}): {best_mean_reward_window:.2f}"
             )
 
             if logger is not None:
-                logger.log(
-                    {
-                        "train/update": update,
-                        "train/global_steps": self.global_step,
-                        "train/episodes": self.total_episodes,
-                        "train/mean_reward_10": mean_10,
-                        "train/best_mean_reward_10": best_mean_reward,
-                    }
+                log_dict = {
+                    "train/update": update,
+                    "train/global_steps": self.global_step,
+                    "train/episodes": self.total_episodes,
+                    "train/mean_reward_10": mean_10,
+                    "train/best_mean_reward_10": best_mean_reward_10,
+                    "train/mean_reward_window": mean_w,
+                    f"train/best_mean_reward_{window}": best_mean_reward_window,
+                }
+                logger.log(log_dict)
+
+            # >>> NEW: early stopping
+            if (
+                self.early_stop_patience is not None
+                and updates_without_improvement >= self.early_stop_patience
+            ):
+                print(
+                    f"\nEarly stopping triggered at update {update}. "
+                    f"Best mean reward (last {window}): {best_mean_reward_window:.2f}"
                 )
+                break
 
         # Final statistics for train.py
         if len(all_episode_rewards) > 0:
@@ -479,7 +537,8 @@ class PPO:
                 "std_reward": float(rewards_array.std()),
                 "min_reward": float(rewards_array.min()),
                 "max_reward": float(rewards_array.max()),
-                "best_mean_reward_10": float(best_mean_reward),
+                "best_mean_reward_10": float(best_mean_reward_10),
+                f"best_mean_reward_{window}": float(best_mean_reward_window),
             }
         else:
             stats = {
