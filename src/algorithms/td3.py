@@ -412,6 +412,11 @@ class TD3:
 
           # Record episode reward
           episode_rewards.append(episode_reward)
+          # -------- SAVE LATEST CHECKPOINT EVERY 100 EPISODES -------- #
+          if episode % 100 == 0:
+             save_path = "td3_latest.pth"   # always overwrite this file
+             self.save(save_path)
+             print(f"[CHECKPOINT UPDATED] Saved at episode {episode}")
 
           if logger is not None:
               logger.log(
@@ -518,8 +523,11 @@ class TD3:
         self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
         self.critic1_optimizer.load_state_dict(checkpoint['critic1_optimizer'])
         self.critic2_optimizer.load_state_dict(checkpoint['critic2_optimizer'])
-        
         # Also load target networks
         self.actor_target.load_state_dict(self.actor.state_dict())
+        # Debug: print actor weights summary
+        print("[DEBUG] Loaded actor weights summary:")
+        for name, param in self.actor.named_parameters():
+            print(f"  {name}: mean={param.data.mean():.4f}, std={param.data.std():.4f}, shape={tuple(param.data.shape)}")
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target.load_state_dict(self.critic2.state_dict())

@@ -1,0 +1,10 @@
+Test Results for TD3 on CarRacing-v3
+Model: C:\Users\Aisha\Desktop\RL\RL_Assignment4\models\td3_CarRacing-v3_seed42.pth
+Number of episodes: 100
+Seed: 42
+============================================================
+
+mean_reward: 345.9902
+std_reward: 164.2484
+min_reward: 26.2458
+max_reward: 811.8774

@@ -168,15 +168,16 @@ class EnvironmentWrapper:
         # 1) Limit episode length
         self.env = TimeLimit(self.env, max_episode_steps=max_steps)
         
-        # 2) If CarRacing — apply CNN
-        if env_name == "CarRacing-v3":
-            self.env =CarRacingCNNWrapper(self.env)
-
-
-        # 3) Optional video recording
+        # 3) Optional video recording (record *raw* frames, BEFORE CNN)
         if record_video:
-            # record every episode (episode_trigger=lambda ep: True)
-            self.env = RecordVideo(self.env, video_dir, episode_trigger=lambda ep: True)
+            raw_env = self.env                      # original CarRacing
+            self.env = RecordVideo(raw_env, video_dir, episode_trigger=lambda ep: True)
+            # DO NOT wrap CNN here!
+
+        # 2) ALWAYS apply CNN LAST
+        if env_name == "CarRacing-v3":
+            self.env = CarRacingCNNWrapper(self.env)
+
 
         # Cache spaces for convenience
         self.observation_space = self.env.observation_space
