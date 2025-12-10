@@ -18,7 +18,8 @@ from typing import Dict, Any
 sys.path.append(str(Path(__file__).parent))
 
 from environment import EnvironmentWrapper
-from algorithms import TD3, SAC, PPO
+from algorithms import TD3, SAC, PPO_LunarLander, PPO_CarRacing
+from algorithms.ppo_carracing import PPO_CarRacing   # <-- NEW
 from utils.plotting import save_statistics_plot
 
 
@@ -50,26 +51,33 @@ def load_config(algorithm: str, environment: str) -> dict:
     return configs[environment]
 
 
-def get_algorithm_class(algorithm: str):
+def get_algorithm_class(algorithm: str, environment: str):
     """
-    Get the algorithm class based on the algorithm name.
+    Get the algorithm class based on the algorithm name + environment.
     
     Args:
         algorithm: Algorithm name (td3, sac, ppo)
+        environment: Environment name (LunarLander-v3, CarRacing-v3)
         
     Returns:
         Algorithm class
     """
+    if algorithm == "ppo":
+        # Use image-based NatureCNN PPO for CarRacing
+        if environment == "CarRacing-v3":
+            return PPO_CarRacing
+        # Use standard MLP PPO for LunarLander
+        return PPO_LunarLander
+
     algorithms = {
-        'td3': TD3,
-        'sac': SAC,
-        'ppo': PPO
+        "td3": TD3,
+        "sac": SAC,
     }
     
     if algorithm not in algorithms:
         raise ValueError(
             f"Unknown algorithm: {algorithm}. "
-            f"Available: {list(algorithms.keys())}"
+            f"Available: ['td3', 'sac', 'ppo']"
         )
     
     return algorithms[algorithm]
@@ -117,7 +125,7 @@ def main():
         '--model-path',
         type=str,
         default=None,
-        help='Path to the trained model (default: models/{algorithm}_{environment}_seed42.pth)'
+        help='Path to the trained model (default: models/{algo_variant}_{environment}_seed42.pth)'
     )
     parser.add_argument(
         '--num-episodes',
@@ -155,13 +163,28 @@ def main():
     
     args = parser.parse_args()
     
+    # Variant naming like train.py: ppo_lunarlander / ppo_carracing / sac / td3
+    if args.algorithm == "ppo":
+        if args.environment == "LunarLander-v3":
+            algo_variant = "ppo_lunarlander"
+        elif args.environment == "CarRacing-v3":
+            algo_variant = "ppo_carracing"
+        else:
+            algo_variant = "ppo"
+    else:
+        algo_variant = args.algorithm
+    
     # Set random seeds for reproducibility
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
     # Determine model path
     if args.model_path is None:
-        model_path = Path(__file__).parent.parent / "models" / f"{args.algorithm}_{args.environment}_seed{args.seed}.pth"
+        model_path = (
+            Path(__file__).parent.parent
+            / "models"
+            / f"{algo_variant}_{args.environment}_seed{args.seed}.pth"
+        )
     else:
         model_path = Path(args.model_path)
     
@@ -178,15 +201,21 @@ def main():
     print(f"\n{'='*60}")
     print(f"Testing Configuration")
     print(f"{'='*60}")
-    print(f"Algorithm: {args.algorithm.upper()}")
+    print(f"Algorithm: {algo_variant.upper()}")
     print(f"Environment: {args.environment}")
     print(f"Model path: {model_path}")
     print(f"Number of test episodes: {args.num_episodes}")
     print(f"Seed: {args.seed}")
     print(f"{'='*60}\n")
     
-    # Load configuration
+    # Load configuration (still keyed by base algorithm name)
     config = load_config(args.algorithm, args.environment)
+    
+    # Decide whether to use CarRacing CNN wrapper (same logic as train.py)
+    if args.environment == "CarRacing-v3" and args.algorithm == "ppo":
+        use_carracing_cnn = False   # PPO_CarRacing uses raw images
+    else:
+        use_carracing_cnn = True    # SAC/TD3 use CNN wrapper
     
     # Initialize environment
     render_mode = 'human' if args.render else None
@@ -197,7 +226,8 @@ def main():
         render_mode=render_mode,
         record_video=args.record_video,
         max_steps=config.get('max_episode_steps', 1000),
-        video_dir=args.video_dir
+        video_dir=args.video_dir,
+        use_carracing_cnn=use_carracing_cnn,
     )
     
     print(env)
@@ -212,20 +242,20 @@ def main():
     print(f"Action space type: Continuous (Box2D)\n")
     
     # Initialize algorithm
-    print(f"Initializing {args.algorithm.upper()} algorithm...")
-    AlgorithmClass = get_algorithm_class(args.algorithm)
+    print(f"Initializing {algo_variant.upper()} algorithm...")
+    AlgorithmClass = get_algorithm_class(args.algorithm, args.environment)
     agent = AlgorithmClass(state_dim, action_dim, config)
     
     # Load trained model
     try:
         agent.load(str(model_path))
-        print(f"{args.algorithm.upper()} model loaded successfully!\n")
+        print(f"{algo_variant.upper()} model loaded successfully!\n")
     except (NotImplementedError, AttributeError) as e:
         print(f"\n{'='*60}")
         print(f"ERROR: Failed to load model!")
         print(f"{'='*60}")
         print(f"{e}")
-        print(f"Please ensure the load() method is implemented in algorithms/{args.algorithm}.py")
+        print(f"Please ensure the load() method is implemented correctly.")
         print(f"{'='*60}\n")
         env.close()
         sys.exit(1)
@@ -236,14 +266,14 @@ def main():
     print(f"{'='*60}\n")
     
     try:
-        # Check if the algorithm has a test/evaluate method
-        if hasattr(agent, 'test'):
-            test_stats = agent.test(env, num_episodes=args.num_episodes)
-        elif hasattr(agent, 'evaluate'):
+        # Prefer evaluate(), fallback to test()
+        if hasattr(agent, 'evaluate'):
             test_stats = agent.evaluate(env, num_episodes=args.num_episodes)
+        elif hasattr(agent, 'test'):
+            test_stats = agent.test(env, num_episodes=args.num_episodes)
         else:
             raise NotImplementedError(
-                f"Neither test() nor evaluate() method found in {args.algorithm}.py"
+                f"Neither evaluate() nor test() method found in {AlgorithmClass.__name__}"
             )
         
         # Display statistics
@@ -266,9 +296,9 @@ def main():
             results_dir.mkdir(exist_ok=True)
             
             # Save statistics to text file
-            results_file = results_dir / f"{args.algorithm}_{args.environment}_test_results.txt"
+            results_file = results_dir / f"{algo_variant}_{args.environment}_test_results.txt"
             with open(results_file, 'w') as f:
-                f.write(f"Test Results for {args.algorithm.upper()} on {args.environment}\n")
+                f.write(f"Test Results for {algo_variant.upper()} on {args.environment}\n")
                 f.write(f"Model: {model_path}\n")
                 f.write(f"Number of episodes: {args.num_episodes}\n")
                 f.write(f"Seed: {args.seed}\n")
@@ -285,19 +315,17 @@ def main():
             
             # Save detailed episode data to CSV if available
             if 'episode_rewards' in test_stats:
-                csv_file = results_dir / f"{args.algorithm}_{args.environment}_test_episodes.csv"
+                csv_file = results_dir / f"{algo_variant}_{args.environment}_test_episodes.csv"
                 with open(csv_file, 'w', newline='') as f:
                     writer = csv.writer(f)
                     
-                    # Determine what data we have
                     has_durations = 'episode_durations' in test_stats
                     
                     if has_durations:
                         writer.writerow(['Episode', 'Reward', 'Duration'])
-                        for i, (reward, duration) in enumerate(zip(
-                            test_stats['episode_rewards'],
-                            test_stats['episode_durations']
-                        ), 1):
+                        for i, (reward, duration) in enumerate(
+                            zip(test_stats['episode_rewards'], test_stats['episode_durations']), 1
+                        ):
                             writer.writerow([i, reward, duration])
                     else:
                         writer.writerow(['Episode', 'Reward'])
@@ -308,22 +336,20 @@ def main():
             
             # Generate and save plots
             if 'episode_rewards' in test_stats:
-                # Plot rewards
-                plot_path = results_dir / f"{args.algorithm}_{args.environment}_test_rewards.png"
+                plot_path = results_dir / f"{algo_variant}_{args.environment}_test_rewards.png"
                 save_statistics_plot(
                     test_stats['episode_rewards'],
-                    title=f"{args.algorithm.upper()} on {args.environment} - Test Episode Rewards",
+                    title=f"{algo_variant.upper()} on {args.environment} - Test Episode Rewards",
                     ylabel="Episode Reward",
                     save_path=str(plot_path)
                 )
                 print(f"Rewards plot saved to: {plot_path}")
             
-            # Plot durations if available
             if 'episode_durations' in test_stats:
-                plot_path = results_dir / f"{args.algorithm}_{args.environment}_test_durations.png"
+                plot_path = results_dir / f"{algo_variant}_{args.environment}_test_durations.png"
                 save_statistics_plot(
                     test_stats['episode_durations'],
-                    title=f"{args.algorithm.upper()} on {args.environment} - Test Episode Durations",
+                    title=f"{algo_variant.upper()} on {args.environment} - Test Episode Durations",
                     ylabel="Episode Duration (steps)",
                     save_path=str(plot_path)
                 )
@@ -336,7 +362,6 @@ def main():
         print(f"ERROR: Testing method not implemented!")
         print(f"{'='*60}")
         print(f"{e}")
-        print(f"\nPlease implement either test() or evaluate() method in algorithms/{args.algorithm}.py")
         print(f"{'='*60}\n")
         env.close()
         sys.exit(1)

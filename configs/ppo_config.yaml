@@ -1,31 +1,60 @@
-# PPO Configuration for Box2D Environments
+# PPO Configuration for Box2D Environments (SB3-accurate)
 
-# LunarLander-v3 configuration
 LunarLander-v3:
-  episodes: 1000
   learning_rate: 0.0003
-  discount_factor: 0.99
+  gamma: 0.99 # SB3: discount factor
   gae_lambda: 0.95
-  clip_epsilon: 0.2
-  entropy_coef: 0.01
-  value_coef: 0.5
+  clip_range: 0.2 # SB3: epsilon
+  ent_coef: 0.0 # SB3 default for MlpPolicy
+  vf_coef: 0.5
   max_grad_norm: 0.5
   batch_size: 64
   n_steps: 2048
   n_epochs: 10
+  episodes: 2000
+  max_episode_steps: 1000
+  save_path: models/ppo_LunarLander-v3_seed42.pth
+
+CarRacing-v3:
+  # ============================================================
+  # CRITICAL FIXES based on RL-Baselines3-Zoo tuned params
+  # ============================================================
+
+  # Learning rate with LINEAR DECAY (not constant)
+  learning_rate: 0.0001 # Initial LR
+  use_linear_lr_decay: true # Decay to 0 over training
+
+  # Standard PPO hyperparameters
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0 # CRITICAL: 0.0 not 0.005
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+
+  # Batch configuration (FIXED from RL Zoo)
+  n_envs: 8 # CRITICAL: Use 8 parallel environments
+  n_steps: 512 # CRITICAL: 512 not 2048
+  batch_size: 128 # CRITICAL: 128 not 64
+  n_epochs: 10
+
+  # Training configuration
+  episodes: 2000
   max_episode_steps: 1000
 
-# CarRacing-v3 configuration
-CarRacing-v3:
-  episodes: 1500
-  learning_rate: 0.00025
-  discount_factor: 0.99
-  gae_lambda: 0.95
-  clip_epsilon: 0.2
-  entropy_coef: 0.001
-  value_coef: 0.5
-  max_grad_norm: 0.5
-  batch_size: 128
-  n_steps: 2048
-  n_epochs: 4
-  max_episode_steps: 1000
+  image_size: 64 # CRITICAL: 64x64 not 96x96
+  frame_stack: 2 # CRITICAL: 2 stacked frames (not 4)
+  frame_skip: 2 # Action repeat
+
+  use_sde: true # CRITICAL: Enable SDE
+  sde_sample_freq: 4
+  log_std_init: -2.0 # Initial log std for action distribution
+
+  normalize_reward: true # CRITICAL: Normalize rewards
+  reward_scale: 1.0
+  clip_reward: 10.0
+
+  reward_window: 100 # Track mean over last 100 episodes
+  early_stop_patience: 200 # Stop if no improvement for 200 updates
+  early_stop_min_episodes: 400 # Minimum episodes before early stop
+  checkpoint_path: models/ppo_CarRacing-v3_best.pth

@@ -1,0 +1,11 @@
+Test Results for PPO_CARRACING on CarRacing-v3
+Model: C:\Users\mohab\Desktop\Uni\Courses\Year 5 -1st term\RL\Ass4\RL_Assignment4\models\ppo_carracing_CarRacing-v3_seed42.pth
+Number of episodes: 100
+Seed: 42
+============================================================
+
+mean_reward: 159.0623
+std_reward: 112.0696
+min_reward: -42.3077
+max_reward: 445.8015
+mean_duration: 451.3800
