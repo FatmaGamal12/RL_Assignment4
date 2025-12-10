@@ -21,7 +21,7 @@ CarRacing-v3:
   discount_factor: 0.99
   gae_lambda: 0.95
   clip_epsilon: 0.2
-  entropy_coef: 0.00
+  entropy_coef: 0.05
   value_coef: 0.5
   max_grad_norm: 0.5
   batch_size: 64
