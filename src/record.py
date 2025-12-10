@@ -18,8 +18,8 @@ from typing import List
 # Add src to path
 sys.path.append(str(Path(__file__).parent))
 
-from environments import EnvironmentWrapper
-from algorithms import A2C, SAC, PPO
+from environment import EnvironmentWrapper
+from algorithms import SAC, PPO
 from utils.plotting import save_statistics_plot, plot_episode_durations
 
 

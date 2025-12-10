@@ -16,15 +16,25 @@ LunarLander-v3:
   save_path: models/ppo_LunarLander-v3_seed42.pth
 
 CarRacing-v3:
-  learning_rate: 0.0003 # unified to PPO default for fairness
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.0
-  vf_coef: 0.5
-  max_grad_norm: 0.5
-  batch_size: 128
-  n_steps: 2048
-  n_epochs: 4
   episodes: 1500
+  learning_rate: 0.0001
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  batch_size: 64
+  n_steps: 2048
+  n_epochs: 10
   max_episode_steps: 1000
+
+  # Image-specific
+  frame_stack: 4
+  frame_skip: 2
+
+  # Early stopping + checkpoint
+  reward_window: 50 # mean over last 50 episodes
+  early_stop_patience: 80 # updates with no improvement before stopping
+  early_stop_min_episodes: 400
+  checkpoint_path: models/ppo_CarRacing-v3_best.pth

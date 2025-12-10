@@ -1,0 +1,11 @@
+Test Results for PPO on LunarLander-v3
+Model: C:\Users\mohab\Desktop\Uni\Courses\Year 5 -1st term\RL\Ass4\RL_Assignment4\models\ppo_LunarLander-v3_seed42.pth
+Number of episodes: 100
+Seed: 42
+============================================================
+
+mean_reward: 255.0425
+std_reward: 75.4540
+min_reward: -22.9230
+max_reward: 324.3339
+mean_duration: 210.8900
