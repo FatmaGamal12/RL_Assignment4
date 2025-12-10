@@ -1,31 +1,30 @@
-# PPO Configuration for Box2D Environments
+# PPO Configuration for Box2D Environments (SB3-accurate)
 
-# LunarLander-v3 configuration
 LunarLander-v3:
-  episodes: 1000
   learning_rate: 0.0003
-  discount_factor: 0.99
+  gamma: 0.99 # SB3: discount factor
   gae_lambda: 0.95
-  clip_epsilon: 0.2
-  entropy_coef: 0.01
-  value_coef: 0.5
+  clip_range: 0.2 # SB3: epsilon
+  ent_coef: 0.0 # SB3 default for MlpPolicy
+  vf_coef: 0.5
   max_grad_norm: 0.5
   batch_size: 64
   n_steps: 2048
   n_epochs: 10
+  episodes: 2000
   max_episode_steps: 1000
+  save_path: models/ppo_LunarLander-v3_seed42.pth
 
-# CarRacing-v3 configuration
 CarRacing-v3:
-  episodes: 1500
-  learning_rate: 0.00025
-  discount_factor: 0.99
+  learning_rate: 0.0003 # unified to PPO default for fairness
+  gamma: 0.99
   gae_lambda: 0.95
-  clip_epsilon: 0.2
-  entropy_coef: 0.001
-  value_coef: 0.5
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
   max_grad_norm: 0.5
   batch_size: 128
   n_steps: 2048
   n_epochs: 4
+  episodes: 1500
   max_episode_steps: 1000

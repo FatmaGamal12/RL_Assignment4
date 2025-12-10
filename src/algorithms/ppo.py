@@ -1,330 +1,548 @@
 """
-Proximal Policy Optimization (PPO) Algorithm Implementation.
+Proximal Policy Optimization (PPO) implementation for Assignment 4.
 
-PPO is an on-policy actor-critic algorithm that uses a clipped surrogate
-objective to limit policy updates and improve training stability.
-
-Reference: https://arxiv.org/abs/1707.06347
+- Compatible with src/train.py, src/test.py, src/record.py, src/environment.py
+- Uses configuration from configs/ppo_config.yaml
+- Single-environment, continuous action spaces (Box2D: LunarLander-v3, CarRacing-v3)
+- Step-based training loop (SB3-style): rollouts of n_steps, multiple epochs
 """
 
+from dataclasses import dataclass
+from typing import Optional, Dict, Any, List
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from typing import Dict, Any, Tuple, List
+from torch.distributions import Normal
 
 
-# ============================
-#  ACTOR NETWORK (Policy)
-# ============================
-class Actor(nn.Module):
+# ============================================================
+#  Utility
+# ============================================================
+
+
+def to_tensor(x, device):
+    return torch.tensor(x, dtype=torch.float32, device=device)
+
+
+# ============================================================
+#  Actor–Critic Network (MLP, SB3-like)
+# ============================================================
+
+
+class ActorCritic(nn.Module):
     """
-    Policy network for continuous action spaces.
-    Outputs mean and log_std for a Gaussian policy.
+    Shared MLP trunk with separate actor (Gaussian) and critic heads.
+
+    This is similar in spirit to SB3's MlpPolicy for continuous actions:
+    - Tanh activations in hidden layers
+    - Orthogonal initialization
+    - Trainable log_std parameter (state-independent diagonal Gaussian)
     """
-    
-    def __init__(self, state_dim: int, action_dim: int):
+
+    def __init__(self, obs_dim: int, act_dim: int, hidden_sizes=(64, 64)):
         super().__init__()
-        self.fc1 = nn.Linear(state_dim, 256)
-        self.fc2 = nn.Linear(256, 256)
-        
-        # Mean of the action distribution
-        self.mean = nn.Linear(256, action_dim)
-        
-        # Learnable log standard deviation
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
-    
-    def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        layers = []
+        last_dim = obs_dim
+        for h in hidden_sizes:
+            layers.append(nn.Linear(last_dim, h))
+            layers.append(nn.Tanh())
+            last_dim = h
+        self.shared = nn.Sequential(*layers)
+
+        # Policy head (mean)
+        self.mu = nn.Linear(last_dim, act_dim)
+
+        # Log-std as free parameter
+        self.log_std = nn.Parameter(torch.zeros(act_dim))
+
+        # Value head
+        self.v = nn.Linear(last_dim, 1)
+
+        # Orthogonal init
+        for m in self.shared:
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, gain=np.sqrt(2.0))
+                nn.init.constant_(m.bias, 0.0)
+
+        nn.init.orthogonal_(self.mu.weight, gain=0.01)
+        nn.init.constant_(self.mu.bias, 0.0)
+
+        nn.init.orthogonal_(self.v.weight, gain=1.0)
+        nn.init.constant_(self.v.bias, 0.0)
+
+    def forward(self, obs: torch.Tensor):
         """
-        Forward pass through the actor network.
-        
-        Args:
-            state: State tensor
-            
         Returns:
-            mean: Mean of the action distribution
-            std: Standard deviation of the action distribution
+            mu: (batch, act_dim)
+            std: (batch, act_dim)
+            value: (batch,)
         """
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        
-        mean = torch.tanh(self.mean(x))  # Bound actions to [-1, 1]
-        std = self.log_std.exp().expand_as(mean)
-        
-        return mean, std
-    
-    def sample(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = self.shared(obs)
+        mu = self.mu(x)
+        std = self.log_std.exp().expand_as(mu)
+        value = self.v(x).squeeze(-1)
+        return mu, std, value
+
+    def get_action_and_value(
+        self,
+        obs: torch.Tensor,
+        action: Optional[torch.Tensor] = None,
+    ):
         """
-        Sample an action from the policy distribution.
-        
-        Args:
-            state: State tensor
-            
-        Returns:
-            action: Sampled action
-            log_prob: Log probability of the action
+        Used both for sampling and for computing log_probs/values during training.
         """
-        mean, std = self(state)
-        
-        # Create normal distribution
-        dist = torch.distributions.Normal(mean, std)
-        
-        # Sample action
-        action = dist.sample()
-        log_prob = dist.log_prob(action).sum(dim=-1, keepdim=True)
-        
-        return action, log_prob
-    
-    def evaluate(self, state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Evaluate actions under the current policy.
-        
-        Args:
-            state: State tensor
-            action: Action tensor
-            
-        Returns:
-            log_prob: Log probability of the actions
-            entropy: Entropy of the policy distribution
-            mean: Mean of the action distribution
-        """
-        mean, std = self(state)
-        
-        # Create normal distribution
-        dist = torch.distributions.Normal(mean, std)
-        
-        # Calculate log probability and entropy
-        log_prob = dist.log_prob(action).sum(dim=-1, keepdim=True)
-        entropy = dist.entropy().sum(dim=-1, keepdim=True)
-        
-        return log_prob, entropy, mean
+        mu, std, value = self.forward(obs)
+        dist = Normal(mu, std)
+
+        if action is None:
+            action = dist.sample()
+
+        log_prob = dist.log_prob(action).sum(-1)
+        entropy = dist.entropy().sum(-1)
+        return action, log_prob, entropy, value
 
 
-# ============================
-#  CRITIC NETWORK (Value Function)
-# ============================
-class Critic(nn.Module):
-    """
-    Value network that estimates the state value function V(s).
-    """
-    
-    def __init__(self, state_dim: int):
-        super().__init__()
-        self.fc1 = nn.Linear(state_dim, 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.value = nn.Linear(256, 1)
-    
-    def forward(self, state: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through the critic network.
-        
-        Args:
-            state: State tensor
-            
-        Returns:
-            value: Estimated state value
-        """
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        value = self.value(x)
-        
-        return value
+# ============================================================
+#  Rollout Buffer with GAE
+# ============================================================
 
 
-# ============================
-#  PPO MAIN CLASS
-# ============================
+@dataclass
+class RolloutBuffer:
+    n_steps: int
+    obs_dim: int
+    act_dim: int
+    gamma: float
+    gae_lambda: float
+    device: torch.device
+
+    def __post_init__(self):
+        self.reset()
+
+    def reset(self):
+        self.obs = np.zeros((self.n_steps, self.obs_dim), dtype=np.float32)
+        self.actions = np.zeros((self.n_steps, self.act_dim), dtype=np.float32)
+        self.log_probs = np.zeros((self.n_steps,), dtype=np.float32)
+        self.rewards = np.zeros((self.n_steps,), dtype=np.float32)
+        self.dones = np.zeros((self.n_steps,), dtype=np.float32)
+        self.values = np.zeros((self.n_steps,), dtype=np.float32)
+
+        self.advantages = np.zeros((self.n_steps,), dtype=np.float32)
+        self.returns = np.zeros((self.n_steps,), dtype=np.float32)
+
+        self.pos = 0
+        self.full = False
+
+    def add(self, obs, action, log_prob, reward, done, value):
+        self.obs[self.pos] = obs
+        self.actions[self.pos] = action
+        self.log_probs[self.pos] = log_prob
+        self.rewards[self.pos] = reward
+        self.dones[self.pos] = float(done)
+        self.values[self.pos] = value
+        self.pos += 1
+        if self.pos >= self.n_steps:
+            self.full = True
+
+    def compute_returns_and_advantages(self, last_value: float, last_done: bool):
+        """
+        GAE(λ) as used in SB3:
+        delta_t = r_t + gamma * V_{t+1} * (1 - done_{t+1}) - V_t
+        A_t = delta_t + gamma * λ * (1 - done_{t+1}) * A_{t+1}
+        """
+        last_gae = 0.0
+        for step in reversed(range(self.n_steps)):
+            if step == self.n_steps - 1:
+                next_non_terminal = 1.0 - float(last_done)
+                next_value = last_value
+            else:
+                next_non_terminal = 1.0 - self.dones[step + 1]
+                next_value = self.values[step + 1]
+
+            delta = (
+                self.rewards[step]
+                + self.gamma * next_value * next_non_terminal
+                - self.values[step]
+            )
+            last_gae = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae
+            self.advantages[step] = last_gae
+
+        self.returns = self.advantages + self.values
+
+    def get(self, batch_size: int):
+        """
+        Yield mini-batches as torch tensors.
+        """
+        assert self.full, "RolloutBuffer is not full yet."
+
+        n_steps = self.n_steps
+        indices = np.random.permutation(n_steps)
+
+        obs = to_tensor(self.obs, self.device)
+        actions = to_tensor(self.actions, self.device)
+        log_probs = to_tensor(self.log_probs, self.device)
+        advantages = to_tensor(self.advantages, self.device)
+        returns = to_tensor(self.returns, self.device)
+        values = to_tensor(self.values, self.device)
+
+        # Normalize advantages (SB3 style)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        for start in range(0, n_steps, batch_size):
+            end = start + batch_size
+            mb_idx = indices[start:end]
+            yield (
+                obs[mb_idx],
+                actions[mb_idx],
+                log_probs[mb_idx],
+                advantages[mb_idx],
+                returns[mb_idx],
+                values[mb_idx],
+            )
+
+
+# ============================================================
+#  PPO Agent (SB3-style, step-based training)
+# ============================================================
+
+
 class PPO:
-    """
-    Proximal Policy Optimization (PPO) algorithm with clipped surrogate objective.
-    """
-    
     def __init__(self, state_dim: int, action_dim: int, config: Dict[str, Any]):
         """
-        Initialize PPO agent.
-        
         Args:
-            state_dim: Dimension of the state space
-            action_dim: Dimension of the action space
-            config: Configuration dictionary containing hyperparameters
+            state_dim: Dimension of observation vector
+            action_dim: Dimension of action vector
+            config: Dictionary from configs/ppo_config.yaml
         """
+
+        # Device
+        device_str = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device_str)
+
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.config = config
-        
-        # Hyperparameters
-        self.lr = config.get("learning_rate", 3e-4)
-        self.gamma = config.get("discount_factor", 0.99)
+
+        # Hyperparameters (support both original and SB3-style keys)
+        self.learning_rate = config.get("learning_rate", 3e-4)
+
+        # discount_factor OR gamma
+        self.gamma = config.get("gamma", config.get("discount_factor", 0.99))
+
         self.gae_lambda = config.get("gae_lambda", 0.95)
-        self.clip_epsilon = config.get("clip_epsilon", 0.2)
-        self.entropy_coef = config.get("entropy_coef", 0.01)
-        self.value_coef = config.get("value_coef", 0.5)
+
+        # clip_epsilon OR clip_range
+        self.clip_range = config.get("clip_range", config.get("clip_epsilon", 0.2))
+
+        # entropy_coef OR ent_coef (SB3 default is 0.0)
+        self.ent_coef = config.get("ent_coef", config.get("entropy_coef", 0.0))
+
+        # value_coef OR vf_coef
+        self.vf_coef = config.get("vf_coef", config.get("value_coef", 0.5))
+
         self.max_grad_norm = config.get("max_grad_norm", 0.5)
         self.batch_size = config.get("batch_size", 64)
         self.n_steps = config.get("n_steps", 2048)
         self.n_epochs = config.get("n_epochs", 10)
-        
-        # Device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Networks
-        self.actor = Actor(state_dim, action_dim).to(self.device)
-        self.critic = Critic(state_dim).to(self.device)
-        
-        # Optimizers
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.lr)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.lr)
-        
-        # Storage for trajectories
-        self.reset_storage()
-    
-    def reset_storage(self):
-        """Reset trajectory storage buffers."""
-        self.states = []
-        self.actions = []
-        self.rewards = []
-        self.dones = []
-        self.log_probs = []
-        self.values = []
-    
-    def select_action(self, state: np.ndarray, deterministic: bool = False) -> np.ndarray:
-        """
-        Select an action using the current policy.
-        
-        Args:
-            state: Current state
-            deterministic: If True, return the mean action (for evaluation)
-            
-        Returns:
-            action: Selected action
-        """
-        # TODO: Implement action selection
-        # 1. Convert state to tensor
-        # 2. Get action from actor network
-        # 3. If deterministic, return mean; otherwise sample from distribution
-        # 4. Store action, log_prob, and value for training
-        # 5. Return action as numpy array
-        
-        raise NotImplementedError("select_action method needs to be implemented")
-    
-    def compute_gae(self, rewards: List[float], values: List[float], dones: List[bool], 
-                    next_value: float) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute Generalized Advantage Estimation (GAE).
-        
-        Args:
-            rewards: List of rewards
-            values: List of state values
-            dones: List of done flags
-            next_value: Value of the next state
-            
-        Returns:
-            advantages: Computed advantages
-            returns: Computed returns (targets for value function)
-        """
-        # TODO: Implement GAE computation
-        # 1. Initialize lists for advantages and returns
-        # 2. Calculate TD errors (delta = r + gamma * V(s') - V(s))
-        # 3. Compute advantages using GAE formula
-        # 4. Compute returns (advantages + values)
-        # 5. Return advantages and returns as tensors
-        
-        raise NotImplementedError("compute_gae method needs to be implemented")
-    
-    def update_policy(self) -> Dict[str, float]:
-        """
-        Update policy and value networks using collected trajectories.
-        
-        Returns:
-            losses: Dictionary containing loss values
-        """
-        # TODO: Implement policy update
-        # 1. Compute GAE advantages and returns
-        # 2. Normalize advantages
-        # 3. Convert stored data to tensors
-        # 4. For each epoch:
-        #    a. Create mini-batches
-        #    b. For each mini-batch:
-        #       - Evaluate actions under current policy
-        #       - Compute policy loss (clipped surrogate objective)
-        #       - Compute value loss
-        #       - Compute entropy bonus
-        #       - Update networks
-        # 5. Reset storage
-        # 6. Return average losses
-        
-        raise NotImplementedError("update_policy method needs to be implemented")
-    
-    def train(self, env, config: Dict[str, Any] = None, logger=None) -> Dict[str, Any]:
-        """
-        Train the PPO agent on the given environment.
-        
-        Args:
-            env: Gymnasium environment
-            config: Configuration dictionary (optional, uses self.config if None)
-            logger: Weights & Biases logger (optional)
-            
-        Returns:
-            training_stats: Dictionary containing training statistics
-        """
-        # TODO: Implement main training loop
-        # 1. Get training parameters from config
-        # 2. Initialize tracking variables (episode rewards, steps, etc.)
-        # 3. Main training loop:
-        #    a. Reset environment
-        #    b. Collect trajectories (n_steps)
-        #    c. Update policy using collected data
-        #    d. Log metrics to W&B (if logger provided)
-        #    e. Track episode statistics
-        # 4. Return training statistics (mean/max/min rewards, etc.)
-        
-        raise NotImplementedError(
-            "Training method for PPO needs to be implemented. "
-            "Please implement the train() method in algorithms/ppo.py"
+
+        # Episodes and steps for total_timesteps estimation
+        self.episodes = config.get("episodes", 1000)
+        self.max_episode_steps = config.get("max_episode_steps", 1000)
+
+        # Actor–critic network
+        self.policy = ActorCritic(state_dim, action_dim).to(self.device)
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.learning_rate)
+
+        # Rollout buffer
+        self.buffer = RolloutBuffer(
+            n_steps=self.n_steps,
+            obs_dim=self.state_dim,
+            act_dim=self.action_dim,
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+            device=self.device,
         )
-    
-    def evaluate(self, env, num_episodes: int = 10) -> Dict[str, float]:
+
+        # Trackers
+        self.global_step = 0
+        self.total_episodes = 0
+
+    # --------------------------------------------------------
+    #  Core interaction methods
+    # --------------------------------------------------------
+
+    def _sample_action(self, state: np.ndarray):
         """
-        Evaluate the trained policy.
-        
-        Args:
-            env: Gymnasium environment
-            num_episodes: Number of episodes to evaluate
-            
-        Returns:
-            eval_stats: Dictionary containing evaluation statistics
+        Sample an action from the current policy for a single state.
+        Returns (action_np, log_prob_float, value_float).
         """
-        # TODO: Implement evaluation
-        # 1. Set policy to evaluation mode
-        # 2. Run episodes using deterministic actions
-        # 3. Track episode rewards
-        # 4. Return mean and std of rewards
-        
-        raise NotImplementedError("evaluate method needs to be implemented")
-    
+        state_tensor = to_tensor(state, self.device).unsqueeze(0)  # (1, obs_dim)
+        with torch.no_grad():
+            action, log_prob, _, value = self.policy.get_action_and_value(state_tensor)
+        action = action.squeeze(0).cpu().numpy()
+        log_prob = float(log_prob.item())
+        value = float(value.item())
+        return action, log_prob, value
+
+    def select_action(self, state: np.ndarray, deterministic: bool = False):
+        """
+        Used by record.py and test scripts:
+        - deterministic=True => use mean of Gaussian
+        - deterministic=False => sample from policy
+        """
+        state_tensor = to_tensor(state, self.device).unsqueeze(0)
+        with torch.no_grad():
+            mu, std, value = self.policy.forward(state_tensor)
+            if deterministic:
+                action = mu
+            else:
+                dist = Normal(mu, std)
+                action = dist.sample()
+
+        action = action.squeeze(0).cpu().numpy()
+        return action
+
+    # --------------------------------------------------------
+    #  Rollout collection and PPO update
+    # --------------------------------------------------------
+
+    def _collect_rollout(self, env) -> List[float]:
+        """
+        Collect n_steps transitions into the rollout buffer.
+        Returns list of completed episode rewards during this rollout.
+        """
+        self.buffer.reset()
+        episode_rewards = []
+        episode_reward = 0.0
+
+        # Start from a fresh state *for each rollout*
+        state, _ = env.reset()
+        done = False
+        truncated = False
+
+        for step in range(self.n_steps):
+            self.global_step += 1
+
+            action, log_prob, value = self._sample_action(state)
+            next_state, reward, done, truncated, _ = env.step(action)
+            terminal = bool(done or truncated)
+
+            self.buffer.add(
+                obs=state,
+                action=action,
+                log_prob=log_prob,
+                reward=reward,
+                done=terminal,
+                value=value,
+            )
+
+            state = next_state
+            episode_reward += reward
+
+            if terminal:
+                self.total_episodes += 1
+                episode_rewards.append(episode_reward)
+                episode_reward = 0.0
+                state, _ = env.reset()
+                done = False
+                truncated = False
+
+        # Bootstrap value from last state for GAE
+        with torch.no_grad():
+            state_tensor = to_tensor(state, self.device).unsqueeze(0)
+            _, _, _, last_value = self.policy.get_action_and_value(state_tensor)
+        last_value = float(last_value.item())
+
+        self.buffer.compute_returns_and_advantages(
+            last_value=last_value,
+            last_done=bool(done or truncated),
+        )
+
+        return episode_rewards
+
+    def _update(self):
+        """
+        PPO update over the rollout buffer for n_epochs.
+        """
+        for _ in range(self.n_epochs):
+            for (
+                obs_batch,
+                actions_batch,
+                old_log_probs_batch,
+                advantages_batch,
+                returns_batch,
+                _,
+            ) in self.buffer.get(self.batch_size):
+
+                # New log_probs, values, entropy
+                _, new_log_probs, entropy, new_values = self.policy.get_action_and_value(
+                    obs_batch, actions_batch
+                )
+
+                log_ratio = new_log_probs - old_log_probs_batch
+                ratio = torch.exp(log_ratio)
+
+                # Policy loss (clipped surrogate)
+                unclipped = ratio * advantages_batch
+                clipped = torch.clamp(
+                    ratio, 1.0 - self.clip_range, 1.0 + self.clip_range
+                ) * advantages_batch
+                policy_loss = -torch.min(unclipped, clipped).mean()
+
+                # Value loss (no value clipping here, but could be added to be even closer to SB3)
+                value_loss = F.mse_loss(new_values, returns_batch)
+
+                # Entropy bonus
+                entropy_loss = entropy.mean()
+
+                loss = (
+                    policy_loss
+                    + self.vf_coef * value_loss
+                    - self.ent_coef * entropy_loss
+                )
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                self.optimizer.step()
+
+    # --------------------------------------------------------
+    #  Public API: train / evaluate / save / load
+    # --------------------------------------------------------
+
+    def train(self, env, config: Dict[str, Any], logger=None) -> Dict[str, Any]:
+        """
+        Main training loop (called from src/train.py).
+
+        We convert (episodes, max_episode_steps) → total_timesteps,
+        then compute number of PPO updates: total_timesteps // n_steps.
+        """
+        episodes = config.get("episodes", self.episodes)
+        max_steps = config.get("max_episode_steps", self.max_episode_steps)
+
+        total_timesteps = episodes * max_steps
+        num_updates = max(1, total_timesteps // self.n_steps)
+
+        all_episode_rewards: List[float] = []
+
+        print(
+            f"PPO Training: total_timesteps ≈ {total_timesteps} "
+            f"({num_updates} updates × {self.n_steps} steps)"
+        )
+
+        best_mean_reward = -np.inf
+
+        for update in range(1, num_updates + 1):
+            ep_rewards = self._collect_rollout(env)
+            all_episode_rewards.extend(ep_rewards)
+
+            self._update()
+
+            # Logging / printing
+            if len(all_episode_rewards) > 0:
+                last_10 = all_episode_rewards[-10:]
+                mean_10 = float(np.mean(last_10))
+            else:
+                mean_10 = 0.0
+
+            if mean_10 > best_mean_reward:
+                best_mean_reward = mean_10
+
+            print(
+                f"[Update {update}/{num_updates}] "
+                f"Global steps: {self.global_step}, "
+                f"Episodes: {self.total_episodes}, "
+                f"Mean reward (last 10): {mean_10:.2f}, "
+                f"Best mean (last 10): {best_mean_reward:.2f}"
+            )
+
+            if logger is not None:
+                logger.log(
+                    {
+                        "train/update": update,
+                        "train/global_steps": self.global_step,
+                        "train/episodes": self.total_episodes,
+                        "train/mean_reward_10": mean_10,
+                        "train/best_mean_reward_10": best_mean_reward,
+                    }
+                )
+
+        # Final statistics for train.py
+        if len(all_episode_rewards) > 0:
+            rewards_array = np.array(all_episode_rewards, dtype=np.float32)
+            stats = {
+                "total_episodes": int(self.total_episodes),
+                "total_steps": int(self.global_step),
+                "mean_reward": float(rewards_array.mean()),
+                "std_reward": float(rewards_array.std()),
+                "min_reward": float(rewards_array.min()),
+                "max_reward": float(rewards_array.max()),
+                "best_mean_reward_10": float(best_mean_reward),
+            }
+        else:
+            stats = {
+                "total_episodes": int(self.total_episodes),
+                "total_steps": int(self.global_step),
+            }
+
+        return stats
+
+    def evaluate(self, env, num_episodes: int = 10) -> Dict[str, Any]:
+        """
+        Evaluation loop used by src/test.py.
+        """
+        episode_rewards: List[float] = []
+        episode_durations: List[int] = []
+
+        for ep in range(num_episodes):
+            state, _ = env.reset()
+            done = False
+            truncated = False
+            ep_ret = 0.0
+            steps = 0
+
+            while not (done or truncated):
+                action = self.select_action(state, deterministic=True)
+                state, reward, done, truncated, _ = env.step(action)
+                ep_ret += reward
+                steps += 1
+
+            episode_rewards.append(ep_ret)
+            episode_durations.append(steps)
+            print(
+                f"[Eval] Episode {ep + 1}/{num_episodes} | "
+                f"Return: {ep_ret:.2f} | Steps: {steps}"
+            )
+
+        rewards_array = np.array(episode_rewards, dtype=np.float32)
+        durations_array = np.array(episode_durations, dtype=np.int32)
+
+        stats = {
+            "episode_rewards": episode_rewards,
+            "episode_durations": episode_durations,
+            "mean_reward": float(rewards_array.mean()),
+            "std_reward": float(rewards_array.std()),
+            "min_reward": float(rewards_array.min()),
+            "max_reward": float(rewards_array.max()),
+            "mean_duration": float(durations_array.mean()),
+        }
+        return stats
+
+    # --------------------------------------------------------
+    #  Saving / Loading (used by train.py & test.py)
+    # --------------------------------------------------------
+
     def save(self, path: str):
         """
-        Save the model parameters.
-        
-        Args:
-            path: Path to save the model
+        Save model parameters.
         """
-        torch.save({
-            'actor': self.actor.state_dict(),
-            'critic': self.critic.state_dict(),
-            'actor_optimizer': self.actor_optimizer.state_dict(),
-            'critic_optimizer': self.critic_optimizer.state_dict(),
-        }, path)
-    
+        torch.save(self.policy.state_dict(), path)
+
     def load(self, path: str):
         """
-        Load the model parameters.
-        
-        Args:
-            path: Path to load the model from
+        Load model parameters.
         """
-        checkpoint = torch.load(path, map_location=self.device)
-        self.actor.load_state_dict(checkpoint['actor'])
-        self.critic.load_state_dict(checkpoint['critic'])
-        self.actor_optimizer.load_state_dict(checkpoint['actor_optimizer'])
-        self.critic_optimizer.load_state_dict(checkpoint['critic_optimizer'])
+        state_dict = torch.load(path, map_location=self.device)
+        self.policy.load_state_dict(state_dict)
